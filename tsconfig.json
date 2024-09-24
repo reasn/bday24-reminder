@@ -1,0 +1,14 @@
+{
+    "ts-node": {
+        "compilerOptions": {
+            "module": "commonjs"
+        }
+    },
+    "compilerOptions": {
+        "module": "esnext",
+        "target": "es2021",
+    },
+    "lib": [
+        "es2021",
+    ]
+}
