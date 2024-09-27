@@ -1,10 +1,49 @@
+import { DateTime } from "luxon";
 import pino from "pino";
+
+export type CommonPromptSet = {
+  system: string;
+  reminder: string;
+};
+
+export type RecipientRow = {
+  rowIndex: number;
+  number: string;
+  name: string;
+  active: boolean;
+  lastWave: number;
+};
+
+export type MessageRow = {
+  active: boolean;
+  caption: string;
+  content: string;
+  type: "prompt" | "template" | "reminder";
+  sendAfter: DateTime;
+  wave: number;
+};
 
 const logger = pino();
 
+const {
+  SHEET_URL,
+  SHEET_TAB_RECIPIENTS,
+  SHEET_TAB_MESSAGES,
+  SHEET_TAB_COMMON_PROMPTS,
+} = process.env;
+
+export const fetchCommonPrompts = async (): Promise<CommonPromptSet> => {
+  const response = await (
+    await fetch(`${SHEET_URL}/tabs/${SHEET_TAB_COMMON_PROMPTS}?_format=records`)
+  ).json();
+  return {
+    system: response.find((r) => r.name === "system").content,
+    reminder: response.find((r) => r.name === "reminder").content,
+  };
+};
 export const fetchActiveRecipients = async (): Promise<RecipientRow[]> => {
   const response = await (
-    await fetch(`${process.env.RECIPIENTS_URL}?_format=records`)
+    await fetch(`${SHEET_URL}/tabs/${SHEET_TAB_RECIPIENTS}?_format=records`)
   ).json();
 
   return response
@@ -14,60 +53,47 @@ export const fetchActiveRecipients = async (): Promise<RecipientRow[]> => {
         number: `+${r.number}`,
         name: r.name,
         active: r.number?.length > 0 && r.active === "TRUE",
-        level: r.level,
+        lastWave: r.lastWave,
       })
     )
     .filter((r: RecipientRow) => r.active);
 };
 export const fetchActiveMessages = async (): Promise<MessageRow[]> => {
-  const response = await (await fetch(process.env.MESSAGES_URL)).json();
+  const response = await (
+    await fetch(`${SHEET_URL}/tabs/${SHEET_TAB_MESSAGES}`)
+  ).json();
 
   return response
     .map(
       (r: any): MessageRow => ({
-        level: r.level,
-        active: r.level > 0 && r.active === "TRUE",
+        sendAfter: r.sendAfter,
+        wave: r.wave,
+        active: r.wave > 0 && r.active === "TRUE",
         caption: r.caption,
         content: r.content,
         type: r.type,
       })
     )
-    .filter((r) => r.active)
-    .sort((a: MessageRow, b: MessageRow) => a.level - b.level);
-};
-
-export type RecipientRow = {
-  rowIndex: number;
-  number: string;
-  name: string;
-  active: boolean;
-  level: number;
-};
-
-export type MessageRow = {
-  active: boolean;
-  caption: string;
-  content: string;
-  type: "prompt" | "template";
-  level: number;
+    .filter((r: MessageRow) => r.active)
+    .sort((a: MessageRow, b: MessageRow) => a.wave - b.wave);
 };
 
 export const updateRecipient = async (
   rowIndex: number,
-  level: number,
+  lastWave: number,
   lastCaption: string,
   lastContent: string
 ) => {
-  logger.info(`PATCH ${process.env.RECIPIENTS_URL}/${rowIndex}`);
+  logger.info(`PATCH ${SHEET_URL}/tabs/${SHEET_TAB_RECIPIENTS}/${rowIndex}`);
   const result = await (
-    await fetch(`${process.env.RECIPIENTS_URL}/${rowIndex}`, {
+    await fetch(`${SHEET_URL}/tabs/${SHEET_TAB_RECIPIENTS}/${rowIndex}`, {
       method: "PATCH",
       mode: "cors",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        level,
+        lastWave,
         lastCaption,
         lastContent,
       }),
@@ -76,5 +102,4 @@ export const updateRecipient = async (
   if (result.detail) {
     throw new Error(result.detail);
   }
-  console.log(result);
 };

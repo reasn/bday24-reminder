@@ -3,8 +3,10 @@ import pino from "pino";
 import OpenAI from "openai";
 
 import {
+  CommonPromptSet,
   fetchActiveMessages,
   fetchActiveRecipients,
+  fetchCommonPrompts,
   MessageRow,
   RecipientRow,
   updateRecipient,
@@ -13,15 +15,17 @@ import { send } from "./sms";
 
 const logger = pino();
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  dangerouslyAllowBrowser: true,
-});
-
 export default async function main() {
+  const openAi = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+    dangerouslyAllowBrowser: true,
+  });
+
   //   await updateRecipient(1, 1, "test message", "hallo Alex");
   logger.info("Preparing sendout");
+  const now = DateTime.now();
 
+  const prompts = await fetchCommonPrompts();
   const recipients = await fetchActiveRecipients();
   const messages = await fetchActiveMessages();
   logger.info(
@@ -29,32 +33,42 @@ export default async function main() {
   );
 
   for (const recipient of recipients) {
-    const sendable = messages.find((m) => m.level > recipient.level);
+    const sendable = messages.find(
+      (m) => /*m.sendAfter >= now &&*/ m.wave > recipient.lastWave
+    );
     if (!sendable) {
+      logger.info(`Nothing to sent to ${recipient.name} (${recipient.number})`);
       continue;
     }
-    const content = await compile(sendable, recipient);
+    const content = await compile(sendable, recipient, prompts, openAi);
     logger.info(
-      `${process.env.HOT === "true" ? "Sending" : "NOT sending"} level ${
-        sendable.level
-      } message to ${recipient.number}`
+      `${
+        process.env.HOT === "true" ? "Sending" : "NOT sending"
+      } message (${now.toISO()}) to ${recipient.number}`
     );
     if (process.env.HOT) {
       await send(recipient.number, content);
     }
     logger.info(
-      `Updating ${recipient.rowIndex} (${recipient.number}) to level ${sendable.level} with ${sendable.caption}`
+      `Updating ${recipient.rowIndex} (${
+        recipient.number
+      }) to ${now.toISO()} with ${sendable.caption}`
     );
     await updateRecipient(
       recipient.rowIndex,
-      sendable.level,
+      sendable.wave,
       sendable.caption,
       content
     );
   }
 }
 
-const compile = async (message: MessageRow, recipient: RecipientRow) => {
+const compile = async (
+  message: MessageRow,
+  recipient: RecipientRow,
+  prompts: CommonPromptSet,
+  openAi: OpenAI
+) => {
   const timeLeft = DateTime.fromISO("2024-12-07T11:00:00").diffNow();
   const valueMap = {
     name: recipient.name,
@@ -63,7 +77,9 @@ const compile = async (message: MessageRow, recipient: RecipientRow) => {
     hours: Math.round(timeLeft.as("hours")),
   };
 
-  let templated = message.content;
+  let templated =
+    message.type === "reminder" ? prompts.reminder : message.content;
+
   for (const key in valueMap) {
     templated = templated.replaceAll(`{${key}}`, valueMap[key]);
   }
@@ -72,17 +88,11 @@ const compile = async (message: MessageRow, recipient: RecipientRow) => {
     return templated;
   }
 
-  const completion = await openai.beta.chat.completions.parse({
+  const completion = await openAi.beta.chat.completions.parse({
     messages: [
       {
         role: "system",
-        content: [
-          "respond with the content of a text message",
-          "it's a reminder sms for a single party guest",
-          "write in a funny over-the-top underwater style",
-          "you never mention the guest's name more than once",
-          "the text message length is limited to 300 characters",
-        ].join(".\n"),
+        content: prompts.system,
       },
       {
         role: "user",
