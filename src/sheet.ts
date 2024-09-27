@@ -12,6 +12,8 @@ export type RecipientRow = {
   name: string;
   active: boolean;
   lastWave: number;
+  language: "en" | "de";
+  messenger: "sms" | "signal";
 };
 
 export type MessageRow = {
@@ -54,6 +56,8 @@ export const fetchActiveRecipients = async (): Promise<RecipientRow[]> => {
         name: r.name,
         active: r.number?.length > 0 && r.active === "TRUE",
         lastWave: r.lastWave,
+        language: r.language,
+        messenger: r.messenger,
       })
     )
     .filter((r: RecipientRow) => r.active);

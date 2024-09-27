@@ -2,6 +2,10 @@ import { DateTime } from "luxon";
 import pino from "pino";
 import OpenAI from "openai";
 
+import { promisify } from "util";
+import { exec } from "child_process";
+const execPromise = promisify(exec);
+
 import {
   CommonPromptSet,
   fetchActiveMessages,
@@ -24,6 +28,7 @@ export default async function main() {
   //   await updateRecipient(1, 1, "test message", "hallo Alex");
   logger.info("Preparing sendout");
   const now = DateTime.now();
+  const hot = process.env.HOT === "true";
 
   const prompts = await fetchCommonPrompts();
   const recipients = await fetchActiveRecipients();
@@ -42,24 +47,50 @@ export default async function main() {
     }
     const content = await compile(sendable, recipient, prompts, openAi);
     logger.info(
-      `${
-        process.env.HOT === "true" ? "Sending" : "NOT sending"
-      } message (${now.toISO()}) to ${recipient.number}`
-    );
-    if (process.env.HOT) {
-      await send(recipient.number, content);
-    }
-    logger.info(
-      `Updating ${recipient.rowIndex} (${
+      `${hot ? "Sending" : "NOT sending"} message ${sendable.caption} to ${
         recipient.number
-      }) to ${now.toISO()} with ${sendable.caption}`
+      } (${recipient.language}) via ${recipient.messenger}`
     );
-    await updateRecipient(
-      recipient.rowIndex,
-      sendable.wave,
-      sendable.caption,
-      content
-    );
+    if (hot) {
+      if (recipient.messenger === "sms") {
+        await send(recipient.number, content);
+        logger.info("Sent via SMS");
+      } else {
+        const { stdout, stderr } = await execPromise(
+          `${process.env.SIGNAL_CLI} send ${
+            recipient.number
+          } -m "${content.replaceAll('"', "'")}"`
+        );
+        if (
+          stderr &&
+          stderr !==
+            `SLF4J(I): Connected with provider of type [ch.qos.logback.classic.spi.LogbackServiceProvider]
+INFO  AccountHelper - The Signal protocol expects that incoming messages are regularly received.
+`
+        ) {
+          console.log(stderr);
+          console.log("pups");
+          throw new Error(stderr);
+        }
+        logger.info("Sent via Signal");
+
+        //        console.log("stderr:", stderr);
+      }
+    }
+    if (hot) {
+      logger.info(
+        `Updating ${recipient.rowIndex} (${
+          recipient.number
+        }) to ${now.toISO()} with ${sendable.caption}`
+      );
+
+      await updateRecipient(
+        recipient.rowIndex,
+        sendable.wave,
+        sendable.caption,
+        content
+      );
+    }
   }
 }
 
@@ -86,6 +117,10 @@ const compile = async (
 
   if (message.type === "template") {
     return templated;
+  }
+
+  if (recipient.language === "de") {
+    templated = `You respond in German. ${templated}`;
   }
 
   const completion = await openAi.beta.chat.completions.parse({
