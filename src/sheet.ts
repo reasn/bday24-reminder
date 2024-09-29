@@ -18,11 +18,12 @@ export type RecipientRow = {
 
 export type MessageRow = {
   active: boolean;
-  caption: string;
+  handle: string;
   content: string;
   type: "prompt" | "template" | "reminder";
   sendAfter: DateTime;
   wave: number;
+  temperature: number;
 };
 
 const logger = pino();
@@ -32,6 +33,8 @@ const {
   SHEET_TAB_RECIPIENTS,
   SHEET_TAB_MESSAGES,
   SHEET_TAB_COMMON_PROMPTS,
+  SHEET_TAB_AUTHORS,
+  SHEET_TAB_LOG,
 } = process.env;
 
 export const fetchCommonPrompts = async (): Promise<CommonPromptSet> => {
@@ -43,6 +46,12 @@ export const fetchCommonPrompts = async (): Promise<CommonPromptSet> => {
     reminder: response.find((r) => r.name === "reminder").content,
   };
 };
+export const fetchAuthors = async (): Promise<string[]> => {
+  const response = await (
+    await fetch(`${SHEET_URL}/tabs/${SHEET_TAB_AUTHORS}?_format=records`)
+  ).json();
+  return response.map((r: any) => r.name);
+};
 export const fetchActiveRecipients = async (): Promise<RecipientRow[]> => {
   const response = await (
     await fetch(`${SHEET_URL}/tabs/${SHEET_TAB_RECIPIENTS}?_format=records`)
@@ -52,10 +61,10 @@ export const fetchActiveRecipients = async (): Promise<RecipientRow[]> => {
     .map(
       (r: any, rowIndex: number): RecipientRow => ({
         rowIndex,
-        number: `+${r.number}`,
+        number: `+${r.number.replace(/[^\d]/g, "")}`,
         name: r.name,
         active: r.number?.length > 0 && r.active === "TRUE",
-        lastWave: r.lastWave,
+        lastWave: parseInt(r.lastWave),
         language: r.language,
         messenger: r.messenger,
       })
@@ -71,11 +80,12 @@ export const fetchActiveMessages = async (): Promise<MessageRow[]> => {
     .map(
       (r: any): MessageRow => ({
         sendAfter: r.sendAfter,
-        wave: r.wave,
+        wave: parseInt(r.wave),
         active: r.wave > 0 && r.active === "TRUE",
-        caption: r.caption,
+        handle: r.handle,
         content: r.content,
         type: r.type,
+        temperature: parseFloat(r.temperature),
       })
     )
     .filter((r: MessageRow) => r.active)
@@ -85,7 +95,7 @@ export const fetchActiveMessages = async (): Promise<MessageRow[]> => {
 export const updateRecipient = async (
   rowIndex: number,
   lastWave: number,
-  lastCaption: string,
+  lasthandle: string,
   lastContent: string
 ) => {
   logger.info(`PATCH ${SHEET_URL}/tabs/${SHEET_TAB_RECIPIENTS}/${rowIndex}`);
@@ -98,8 +108,36 @@ export const updateRecipient = async (
       },
       body: JSON.stringify({
         lastWave,
-        lastCaption,
+        lasthandle,
         lastContent,
+      }),
+    })
+  ).json();
+  if (result.detail) {
+    throw new Error(result.detail);
+  }
+};
+export const addLog = async (
+  name: string,
+  number: string,
+  timestamp: DateTime,
+  handle: string,
+  message: string
+) => {
+  logger.info(`POST ${SHEET_URL}/tabs/${SHEET_TAB_LOG}`);
+  const result = await (
+    await fetch(`${SHEET_URL}/tabs/${SHEET_TAB_LOG}`, {
+      method: "POST",
+      mode: "cors",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name,
+        number,
+        timestamp: timestamp.toISO(),
+        handle,
+        message,
       }),
     })
   ).json();

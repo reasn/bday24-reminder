@@ -2,7 +2,7 @@ import pino from "pino";
 
 const logger = pino();
 
-export const send = async (to: string, content: string) => {
+export const sendSms = async (to: string, content: string) => {
   const res: any = await (
     await fetch("https://api.httpsms.com/v1/messages/send", {
       method: "POST",
