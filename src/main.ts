@@ -21,7 +21,15 @@ import { sendSms } from "./sms";
 
 const logger = pino();
 
-const { LOOPS, HOT_SEND, HOT_UPDATE } = process.env;
+const {
+  LOOP_REPEAT,
+  LOOP_WAIT,
+  CANARY,
+  RECIPIENT_CAP,
+  MAX_WAVE,
+  HOT_SEND,
+  HOT_UPDATE,
+} = process.env;
 
 export default async function main() {
   const openAi = new OpenAI({
@@ -36,16 +44,31 @@ export default async function main() {
   const hotUpdate = HOT_UPDATE === "true";
 
   const prompts = await fetchCommonPrompts();
-  const recipients = await fetchActiveRecipients();
-  const messages = await fetchActiveMessages();
+  let recipients = await fetchActiveRecipients();
+  if (CANARY) {
+    recipients = recipients.filter((r) => r.number === CANARY);
+  }
+  if (RECIPIENT_CAP && parseInt(RECIPIENT_CAP) > 0) {
+    recipients = recipients.slice(0, parseInt(RECIPIENT_CAP));
+  }
+  let messages = await fetchActiveMessages();
+  if (MAX_WAVE) {
+    messages = messages.filter((m) => m.wave <= parseInt(MAX_WAVE || "0"));
+  }
   const authors = await fetchAuthors();
   logger.info(
-    `Fetched ${recipients.length} recipients and ${messages.length} messages`
+    `Fetched ${recipients.length} recipients ${CANARY ? "(CANARY)" : ""} and ${
+      messages.length
+    } messages`
   );
-  for (let i = 0; i < parseInt(process.env.LOOPS || "1"); i++)
+
+  const loops = parseInt(LOOP_REPEAT || "1");
+  for (let i = 0; i < loops; i++) {
     for (const recipient of recipients) {
       const sendable = messages.find(
-        (m) => /*m.sendAfter >= now &&*/ m.wave > recipient.lastWave
+        (m) =>
+          /*m.sendAfter >= now &&*/ m.wave > recipient.lastWave &&
+          (m.highPriority || recipient.highIntensity)
       );
       if (!sendable) {
         logger.info(
@@ -91,6 +114,12 @@ export default async function main() {
         );
       }
     }
+    if (loops > 1) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, parseInt(LOOP_WAIT || "0"))
+      );
+    }
+  }
 }
 
 const send = async (recipient: RecipientRow, content: string) => {
@@ -126,7 +155,7 @@ const wrapWithAuthor = (
   authors: string[]
 ) => {
   content = `🐙\n${content}`;
-  if (sendable.handle === "invite") {
+  if (sendable.handle === "invite" || sendable.handle == "bot-intro") {
     return content;
   }
   return `${content}\n\n${authors[Math.floor(Math.random() * authors.length)]}`;
@@ -138,7 +167,7 @@ const renderMessageContent = async (
   prompts: CommonPromptSet,
   openAi: OpenAI
 ) => {
-  const timeLeft = DateTime.fromISO("2024-12-07T11:00:00").diffNow();
+  const timeLeft = DateTime.fromISO("2024-12-07T12:00:00").diffNow();
   const valueMap = {
     name: recipient.name,
     weeks: Math.round(timeLeft.as("weeks")).toLocaleString(),
@@ -161,6 +190,15 @@ const renderMessageContent = async (
   if (recipient.language === "de") {
     templated = `You respond in German. ${templated}`;
   }
+  if (recipient.language === "it") {
+    templated = `You respond in Italian. ${templated}`;
+  }
+  if (recipient.language === "fr") {
+    templated = `You respond in French. ${templated}`;
+  }
+  if (recipient.language === "es") {
+    templated = `You respond in Spanish. ${templated}`;
+  }
 
   const completion = await openAi.beta.chat.completions.parse({
     messages: [
@@ -176,7 +214,7 @@ const renderMessageContent = async (
     model: "gpt-4o-2024-08-06",
     // model: "gpt-3.5-turbo",
     //"gpt-4o-mini-2024-07-18",
-    temperature: message.temperature,
+    // temperature: 1,
   });
 
   if (!completion.choices[0].message.content) {

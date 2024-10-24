@@ -12,8 +12,9 @@ export type RecipientRow = {
   name: string;
   active: boolean;
   lastWave: number;
-  language: "en" | "de";
+  language: "en" | "de" | "fr" | "it" | "es";
   messenger: "sms" | "signal";
+  highIntensity: boolean;
 };
 
 export type MessageRow = {
@@ -23,7 +24,7 @@ export type MessageRow = {
   type: "prompt" | "template" | "reminder";
   sendAfter: DateTime;
   wave: number;
-  temperature: number;
+  highPriority: boolean;
 };
 
 const logger = pino();
@@ -46,12 +47,14 @@ export const fetchCommonPrompts = async (): Promise<CommonPromptSet> => {
     reminder: response.find((r) => r.name === "reminder").content,
   };
 };
+
 export const fetchAuthors = async (): Promise<string[]> => {
   const response = await (
     await fetch(`${SHEET_URL}/tabs/${SHEET_TAB_AUTHORS}?_format=records`)
   ).json();
   return response.map((r: any) => r.name);
 };
+
 export const fetchActiveRecipients = async (): Promise<RecipientRow[]> => {
   const response = await (
     await fetch(`${SHEET_URL}/tabs/${SHEET_TAB_RECIPIENTS}?_format=records`)
@@ -67,6 +70,7 @@ export const fetchActiveRecipients = async (): Promise<RecipientRow[]> => {
         lastWave: parseInt(r.lastWave),
         language: r.language,
         messenger: r.messenger,
+        highIntensity: r.intensity === "high",
       })
     )
     .filter((r: RecipientRow) => r.active);
@@ -85,7 +89,7 @@ export const fetchActiveMessages = async (): Promise<MessageRow[]> => {
         handle: r.handle,
         content: r.content,
         type: r.type,
-        temperature: parseFloat(r.temperature),
+        highPriority: r.priority === "high",
       })
     )
     .filter((r: MessageRow) => r.active)
@@ -95,7 +99,7 @@ export const fetchActiveMessages = async (): Promise<MessageRow[]> => {
 export const updateRecipient = async (
   rowIndex: number,
   lastWave: number,
-  lasthandle: string,
+  lastHandle: string,
   lastContent: string
 ) => {
   logger.info(`PATCH ${SHEET_URL}/tabs/${SHEET_TAB_RECIPIENTS}/${rowIndex}`);
@@ -108,7 +112,7 @@ export const updateRecipient = async (
       },
       body: JSON.stringify({
         lastWave,
-        lasthandle,
+        lastHandle,
         lastContent,
       }),
     })
