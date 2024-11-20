@@ -19,3 +19,11 @@ yehaa🪸\
 "
 
 ```
+
+
+## Future ideas
+Recipient-specific flow to account for later invitees
+
+### Open challenges
+* Late invitations shouldn't cycle through all steps
+* Minimum time intervals between messages should be adhered to automatically

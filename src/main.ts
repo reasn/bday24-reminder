@@ -8,7 +8,7 @@ const execPromise = promisify(exec);
 
 import {
   addLog,
-  CommonPromptSet,
+  VariableSet,
   fetchActiveMessages,
   fetchActiveRecipients,
   fetchAuthors,
@@ -51,6 +51,7 @@ export default async function main() {
   if (RECIPIENT_CAP && parseInt(RECIPIENT_CAP) > 0) {
     recipients = recipients.slice(0, parseInt(RECIPIENT_CAP));
   }
+
   let messages = await fetchActiveMessages();
   if (MAX_WAVE) {
     messages = messages.filter((m) => m.wave <= parseInt(MAX_WAVE || "0"));
@@ -65,10 +66,16 @@ export default async function main() {
   const loops = parseInt(LOOP_REPEAT || "1");
   for (let i = 0; i < loops; i++) {
     for (const recipient of recipients) {
+      // console.log(recipient)
       const sendable = messages.find(
         (m) =>
-          /*m.sendAfter >= now &&*/ m.wave > recipient.lastWave &&
-          (m.highPriority || recipient.highIntensity)
+          m.wave > recipient.lastWave &&
+          (m.highPriority || recipient.highIntensity) &&
+          (m.condition !== "slots_unknown" ||
+            recipient.slots === "not_confirmed") &&
+          (m.condition !== "coming" ||
+            (recipient.slots !== "not_confirmed" && recipient.slots >= 1)) &&
+          (m.condition !== "not_coming" || recipient.slots === 0)
       );
       if (!sendable) {
         logger.info(
@@ -84,7 +91,7 @@ export default async function main() {
 
       logger.info(
         `${hotSend ? "Sending" : "NOT sending"} message ${sendable.handle} to ${
-          recipient.number
+          recipient.name
         } (${recipient.language}) via ${recipient.messenger}`
       );
       if (hotSend) {
@@ -164,7 +171,7 @@ const wrapWithAuthor = (
 const renderMessageContent = async (
   message: MessageRow,
   recipient: RecipientRow,
-  prompts: CommonPromptSet,
+  variables: VariableSet,
   openAi: OpenAI
 ) => {
   const timeLeft = DateTime.fromISO("2024-12-07T12:00:00").diffNow();
@@ -174,10 +181,12 @@ const renderMessageContent = async (
     days: Math.round(timeLeft.as("days")).toLocaleString(),
     seconds: Math.round(timeLeft.as("seconds")).toLocaleString(),
     hours: Math.round(timeLeft.as("hours")).toLocaleString(),
+    slots_left: `${variables.slots_left}`,
+    slots_confirmed: `${variables.slots_confirmed}`,
+    slots_not_confirmed: `${variables.slots_not_confirmed}`,
   };
 
-  let templated =
-    message.type === "reminder" ? prompts.reminder : message.content;
+  let templated = message.content;
 
   for (const key in valueMap) {
     templated = templated.replaceAll(`{${key}}`, valueMap[key]);
@@ -204,7 +213,7 @@ const renderMessageContent = async (
     messages: [
       {
         role: "system",
-        content: prompts.system,
+        content: variables.system_prompt,
       },
       {
         role: "user",

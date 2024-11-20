@@ -1,14 +1,17 @@
 import { DateTime } from "luxon";
 import pino from "pino";
 
-export type CommonPromptSet = {
-  system: string;
-  reminder: string;
+export type VariableSet = {
+  system_prompt: string;
+  slots_left: number;
+  slots_confirmed: number;
+  slots_not_confirmed: number;
 };
 
 export type RecipientRow = {
   rowIndex: number;
   number: string;
+  slots: number | "not_confirmed";
   name: string;
   active: boolean;
   lastWave: number;
@@ -21,10 +24,11 @@ export type MessageRow = {
   active: boolean;
   handle: string;
   content: string;
-  type: "prompt" | "template" | "reminder";
+  type: "prompt" | "template";
   sendAfter: DateTime;
   wave: number;
   highPriority: boolean;
+  condition: null | "slots_unknown" | "coming" | "not_coming";
 };
 
 const logger = pino();
@@ -33,18 +37,27 @@ const {
   SHEET_URL,
   SHEET_TAB_RECIPIENTS,
   SHEET_TAB_MESSAGES,
-  SHEET_TAB_COMMON_PROMPTS,
+  SHEET_TAB_VARIABLES,
   SHEET_TAB_AUTHORS,
   SHEET_TAB_LOG,
 } = process.env;
 
-export const fetchCommonPrompts = async (): Promise<CommonPromptSet> => {
+export const fetchCommonPrompts = async (): Promise<VariableSet> => {
   const response = await (
-    await fetch(`${SHEET_URL}/tabs/${SHEET_TAB_COMMON_PROMPTS}?_format=records`)
+    await fetch(`${SHEET_URL}/tabs/${SHEET_TAB_VARIABLES}?_format=records`)
   ).json();
   return {
-    system: response.find((r) => r.name === "system").content,
-    reminder: response.find((r) => r.name === "reminder").content,
+    system_prompt: response.find((r: any) => r.name === "system_prompt")
+      .content,
+    slots_left: parseInt(
+      response.find((r: any) => r.name === "slots_left").content
+    ),
+    slots_confirmed: parseInt(
+      response.find((r: any) => r.name === "slots_confirmed").content
+    ),
+    slots_not_confirmed: parseInt(
+      response.find((r: any) => r.name === "slots_not_confirmed").content
+    ),
   };
 };
 
@@ -65,6 +78,8 @@ export const fetchActiveRecipients = async (): Promise<RecipientRow[]> => {
       (r: any, rowIndex: number): RecipientRow => ({
         rowIndex,
         number: `+${r.number.replace(/[^\d]/g, "")}`,
+        slots:
+          r.slots === "not_confirmed" ? "not_confirmed" : parseInt(r.slots),
         name: r.name,
         active: r.number?.length > 0 && r.active === "TRUE",
         lastWave: parseInt(r.lastWave),
@@ -90,6 +105,7 @@ export const fetchActiveMessages = async (): Promise<MessageRow[]> => {
         content: r.content,
         type: r.type,
         highPriority: r.priority === "high",
+        condition: r.condition ? r.condition : null,
       })
     )
     .filter((r: MessageRow) => r.active)
